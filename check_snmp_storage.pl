@@ -86,6 +86,8 @@ my $o_passwd=	undef;		# Pass for snmpv3
 my $v3protocols=undef;	# V3 protocol list.
 my $o_authproto='md5';		# Auth protocol
 my $o_privproto='des';		# Priv protocol
+my $o_authproto_opt=undef;	# Auth protocol option value
+my $o_privproto_opt=undef;	# Priv protocol option value
 my $o_privpass= undef;		# priv password
 my $UOM_float= 4;		# decimal places
 # SNMP Message size parameter (Makina Corpus contrib)
@@ -96,7 +98,7 @@ my $o_octetlength=undef;
 sub p_version { print "$Name version : $Version\n"; }
 
 sub print_usage {
-    print "Usage: $Name [-v] -H <host> -C <snmp_community> [-2] | (-l login -x passwd [-X pass -L <authp>,<privp>]) [-p <port>] [-P <protocol>] -m <name in desc_oid> [-q storagetype] -w <warn_level> -c <crit_level> [-t <timeout>] [-T pl|pu|bl|bu ] [-r -s -i -G] [-e] [-S 0|1[,1,<car>]] [-o <octet_length>] [-R <% reserved>]\n";
+    print "Usage: $Name [-v] -H <host> -C <snmp_community> [-2] | (-l login -x passwd [-X pass [-L <authp>,<privp>] [-A <authp>] [-Y <privp>]]) [-p <port>] [-P <protocol>] -m <name in desc_oid> [-q storagetype] -w <warn_level> -c <crit_level> [-t <timeout>] [-T pl|pu|bl|bu ] [-r -s -i -G] [-e] [-S 0|1[,1,<car>]] [-o <octet_length>] [-R <% reserved>]\n";
 }
 
 sub round ($$) {
@@ -148,6 +150,10 @@ warn if %used > warn and critical if %used > crit
 -L, --protocols=<authproto>,<privproto>
    <authproto> : Authentication protocol (md5|sha : default md5)
    <privproto> : Priv protocole (des|aes : default des) 
+-A, --authproto=<authproto>
+   SNMPv3 authentication protocol (md5|sha)
+-Y, --privproto=<privproto>
+   SNMPv3 privacy protocol (des|aes)
 -x, --passwd=PASSWD
    Password for snmpv3 authentication
 -p, --port=PORT
@@ -247,6 +253,8 @@ sub check_options {
 	'x:s'	=> \$o_passwd,		'passwd:s'	=> \$o_passwd,
 	'X:s'	=> \$o_privpass,		'privpass:s'	=> \$o_privpass,
 	'L:s'	=> \$v3protocols,		'protocols:s'	=> \$v3protocols,   	
+        'A:s'   => \$o_authproto_opt,           'authproto:s'   => \$o_authproto_opt,
+        'Y:s'   => \$o_privproto_opt,           'privproto:s'   => \$o_privproto_opt,
         'c:s'   => \$o_crit,    	'critical:s'	=> \$o_crit,
         'w:s'   => \$o_warn,    	'warn:s'	=> \$o_warn,
 	't:i'   => \$o_timeout,       	'timeout:i'     => \$o_timeout,
@@ -277,11 +285,29 @@ sub check_options {
 	if (defined ($v3protocols)) {
 	  if (!defined($o_login)) { print "Put snmp V3 login info with protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
 	  my @v3proto=split(/,/,$v3protocols);
-	  if ((defined ($v3proto[0])) && ($v3proto[0] ne "")) {$o_authproto=$v3proto[0];	}	# Auth protocol
-	  if (defined ($v3proto[1])) {$o_privproto=$v3proto[1];	}	# Priv  protocol
+	  if ((defined ($v3proto[0])) && ($v3proto[0] ne "")) {$o_authproto=lc $v3proto[0];	}	# Auth protocol
+	  if (defined ($v3proto[1])) {$o_privproto=lc $v3proto[1];	}	# Priv  protocol
 	  if ((defined ($v3proto[1])) && (!defined($o_privpass))) {
 	    print "Put snmp V3 priv login info with priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
 	}
+	if (defined $o_authproto_opt) {
+	  $o_authproto = lc $o_authproto_opt;
+	} else {
+	  $o_authproto = lc $o_authproto;
+	}
+	if (($o_authproto ne 'md5') && ($o_authproto ne 'sha')) {
+	  print "Unknown authentication protocol for SNMPv3: $o_authproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+	if (defined $o_privproto_opt) {
+	  $o_privproto = lc $o_privproto_opt;
+	} else {
+	  $o_privproto = lc $o_privproto;
+	}
+	if (($o_privproto ne 'des') && ($o_privproto ne 'aes')) {
+	  print "Unknown privacy protocol for SNMPv3: $o_privproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+	if ((defined $o_authproto_opt || defined $o_privproto_opt) && !defined($o_login)) {
+	  print "Put snmp V3 login info when specifying auth/priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+	if (defined $o_privproto_opt && !defined($o_privpass)) {
+	  print "Put snmp V3 priv login info when specifying priv protocol!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
     # Check types
     if ( !defined($o_type) ) { $o_type="pu" ;}
     if ( ! grep( /^$o_type$/ ,@o_typeok) ) { print_usage(); exit $ERRORS{"UNKNOWN"}};   

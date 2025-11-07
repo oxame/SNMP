@@ -223,6 +223,8 @@ my $o_passwd=		undef;	# Pass for snmpv3
 my $v3protocols=	undef;	# V3 protocol list.
 my $o_authproto=	'md5';	# Auth protocol
 my $o_privproto=	'des';	# Priv protocol
+my $o_authproto_opt=undef;	# Auth protocol option value
+my $o_privproto_opt=undef;	# Priv protocol option value
 my $o_privpass= 	undef;	# priv password
 
 ## Additional global variables
@@ -232,7 +234,7 @@ my $check_type = 0;
 sub p_version { print "check_uptime version : $Version\n"; }
 
 sub print_usage {
-    print "Usage: $0 [-v [debugfilename]] [-T local|unix-host|unix-sys|win|net] [-H <host> (-C <snmp_community>) [-2] | (-l login -x passwd [-X pass -L <authp>,<privp>) [-p <port>]] [-w <warn minutes> -s <crit minutes>] [-f] [-P <previous perf data from nagios \$SERVICEPERFDATA\$>] [-t <timeout>] | [-V] [--label <string>]\n";
+    print "Usage: $0 [-v [debugfilename]] [-T local|unix-host|unix-sys|win|net] [-H <host> (-C <snmp_community>) [-2] | (-l login -x passwd [-X pass [-L <authp>,<privp>] [-A <authp>] [-Y <privp>]) [-p <port>]] [-w <warn minutes> -s <crit minutes>] [-f] [-P <previous perf data from nagios \$SERVICEPERFDATA\$>] [-t <timeout>] | [-V] [--label <string>]\n";
 }
 
 sub isnnum { # Return true if arg is not a number
@@ -304,6 +306,10 @@ SNMP Access Options:
  -L, --protocols=<authproto>,<privproto>
    <authproto> : Authentication protocol (md5|sha : default md5)
    <privproto> : Priv protocols (des|aes : default des) 
+-A, --authproto=<authproto>
+   SNMPv3 authentication protocol (md5|sha)
+-Y, --privproto=<privproto>
+   SNMPv3 privacy protocol (des|aes)
  -p, --port=PORT
    SNMP port (Default 161)
 EOT
@@ -368,6 +374,8 @@ sub check_options {
 	'x:s'	=> \$o_passwd,		'passwd:s'	=> \$o_passwd,
 	'X:s'	=> \$o_privpass,	'privpass:s'	=> \$o_privpass,
 	'L:s'	=> \$v3protocols,	'protocols:s'	=> \$v3protocols,
+        'A:s'   => \$o_authproto_opt,           'authproto:s'   => \$o_authproto_opt,
+        'Y:s'   => \$o_privproto_opt,           'privproto:s'   => \$o_privproto_opt,
         't:i'   => \$o_timeout,    	'timeout:i'	=> \$o_timeout,
 	'V'	=> \$o_version,		'version'	=> \$o_version,
         'f'     => \$o_perf,            'perfparse'     => \$o_perf,
@@ -414,11 +422,29 @@ sub check_options {
     if (defined ($v3protocols)) {
 	if (!defined($o_login)) { print "Put snmp V3 login info with protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
 	my @v3proto=split(/,/,$v3protocols);
-	if ((defined ($v3proto[0])) && ($v3proto[0] ne "")) {$o_authproto=$v3proto[0];  }	# Auth protocol
-	if (defined ($v3proto[1])) {$o_privproto=$v3proto[1];	}	# Priv  protocol
+	if ((defined ($v3proto[0])) && ($v3proto[0] ne "")) {$o_authproto=lc $v3proto[0];  }	# Auth protocol
+	if (defined ($v3proto[1])) {$o_privproto=lc $v3proto[1];	}	# Priv  protocol
 	if ((defined ($v3proto[1])) && (!defined($o_privpass)))
 	  { print "Put snmp V3 priv login info with priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
     }
+    if (defined $o_authproto_opt) {
+        $o_authproto = lc $o_authproto_opt;
+    } else {
+        $o_authproto = lc $o_authproto;
+    }
+    if (($o_authproto ne 'md5') && ($o_authproto ne 'sha')) {
+        print "Unknown authentication protocol for SNMPv3: $o_authproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    if (defined $o_privproto_opt) {
+        $o_privproto = lc $o_privproto_opt;
+    } else {
+        $o_privproto = lc $o_privproto;
+    }
+    if (($o_privproto ne 'des') && ($o_privproto ne 'aes')) {
+        print "Unknown privacy protocol for SNMPv3: $o_privproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    if ((defined $o_authproto_opt || defined $o_privproto_opt) && !defined($o_login)) {
+        print "Put snmp V3 login info when specifying auth/priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    if (defined $o_privproto_opt && !defined($o_privpass)) {
+        print "Put snmp V3 priv login info when specifying priv protocol!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
 
     if (defined($o_timeout) && (isnnum($o_timeout) || ($o_timeout < 2) || ($o_timeout > 60))) 
 	{ print "Timeout must be >1 and <60 !\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
