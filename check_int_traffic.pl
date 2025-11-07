@@ -66,6 +66,8 @@ my $privpass;                                 # Priv password for snmpv3
 my $v3protocols;                              # SNMPv3 protocol list
 my $authproto = 'md5';                        # SNMPv3 auth protocol
 my $privproto = 'des';                        # SNMPv3 priv protocol
+my $authproto_opt;                            # SNMPv3 auth protocol option value
+my $privproto_opt;                            # SNMPv3 priv protocol option value
 my $community;                                # community 
 my $oid2get;                                  # To store the OIDs
 my $IntDownAlert;                             # Alarm if interface is down. Default is no alarm
@@ -90,7 +92,9 @@ GetOptions
          "l=s" => \$login,         "login=s"       => \$login,
          "x=s" => \$passwd,        "passwd=s"      => \$passwd,
          "X=s" => \$privpass,      "privpass=s"    => \$privpass,
-         "L=s" => \$v3protocols,   "protocols=s"   => \$v3protocols);
+         "L=s" => \$v3protocols,   "protocols=s"   => \$v3protocols,
+         "A=s" => \$authproto_opt, "authproto=s"   => \$authproto_opt,
+         "Y=s" => \$privproto_opt, "privproto=s"   => \$privproto_opt);
 
 if (defined $v3protocols) {
    if ($v3protocols =~ /,/) {
@@ -116,7 +120,40 @@ if (defined $v3protocols) {
    }
 }
 
-if (defined $login || defined $passwd || defined $privpass) {
+if (defined $authproto_opt) {
+   $authproto = lc $authproto_opt;
+}
+else {
+   $authproto = lc $authproto;
+}
+if ($authproto ne 'md5' && $authproto ne 'sha') {
+   print "Unknown authentication protocol for SNMPv3: $authproto\n";
+   exit 3;
+}
+
+if (defined $privproto_opt) {
+   $privproto = lc $privproto_opt;
+}
+else {
+   $privproto = lc $privproto;
+}
+if ($privproto ne 'des' && $privproto ne 'aes') {
+   print "Unknown privacy protocol for SNMPv3: $privproto\n";
+   exit 3;
+}
+
+if ((defined $authproto_opt || defined $privproto_opt) && !defined $login) {
+   print "SNMPv3 protocol options require SNMPv3 login credentials\n";
+   exit 3;
+}
+
+if (defined $privproto_opt && !defined $privpass) {
+   print "SNMPv3 privacy protocol option requires a privacy password\n";
+   exit 3;
+}
+
+if (defined $login || defined $passwd || defined $privpass ||
+    defined $authproto_opt || defined $privproto_opt) {
    if (!defined $login || !defined $passwd) {
       print "SNMPv3 login and password must both be specified\n";
       exit 3;
@@ -746,7 +783,7 @@ exit 3;
 
 sub print_usage
     {
-    print "\nUsage: $ProgName -H <host> [-C community] [-v 1|2|3 | -l login -x passwd [-X privpass -L <authp>,<privp>]] [-d]\n\n";
+    print "\nUsage: $ProgName -H <host> [-C community] [-v 1|2|3 | -l login -x passwd [-X privpass [-L <authp>,<privp>] [-A <authp>] [-Y <privp>]]] [-d]\n\n"; 
     print "or\n";
     print "\nUsage: $ProgName -h for help.\n\n";
     }
@@ -762,6 +799,8 @@ sub print_help
     print "    -x, --passwd=PASSWD : SNMPv3 authentication password\n";
     print "    -X, --privpass=PASSWD : SNMPv3 privacy password (enables AuthPriv)\n";
     print "    -L, --protocols=<authproto>,<privproto> : SNMPv3 auth and priv protocols (md5|sha, des|aes)\n";
+    print "    -A, --authproto=<authproto> : SNMPv3 authentication protocol (md5|sha)\n";
+    print "    -Y, --privproto=<privproto> : SNMPv3 privacy protocol (des|aes)\n";
     print "    -g, --64bits : Use 64bits counters\n";
     print "    -d, --down : Alarm if any of the interfaces is down\n";
     print "    -h, --help : Short help message\n";
