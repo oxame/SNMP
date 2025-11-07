@@ -60,6 +60,12 @@ my ($session,$error);                         # Needed to establish the session
 my $key;                                      # Needed in the loops. Contains various OIDs
 my $snmpversion;                              # SNMP version
 my $snmpversion_def = 1;                      # SNMP version default
+my $login;                                    # Login for snmpv3
+my $passwd;                                   # Auth password for snmpv3
+my $privpass;                                 # Priv password for snmpv3
+my $v3protocols;                              # SNMPv3 protocol list
+my $authproto = 'md5';                        # SNMPv3 auth protocol
+my $privproto = 'des';                        # SNMPv3 priv protocol
 my $community;                                # community 
 my $oid2get;                                  # To store the OIDs
 my $IntDownAlert;                             # Alarm if interface is down. Default is no alarm
@@ -74,13 +80,49 @@ $ENV{'ENV'}='';
 
 Getopt::Long::Configure('bundling');
 GetOptions
-	("h"   => \$help,          "help"          => \$help,
-	 "v=s" => \$snmpversion,   "snmpversion=s" => \$snmpversion,
-	 "d"   => \$IntDownAlert,  "down"          => \$IntDownAlert,
-	 "H=s" => \$hostname,      "hostname=s"    => \$hostname,
-	 "C=s" => \$community,     "community=s"   => \$community,
-	 "p=s" => \$snmpport,      "port=s"        => \$snmpport,
-	 "g"   => \$v2counters,    "64bits"        => \$v2counters);
+        ("h"   => \$help,          "help"          => \$help,
+         "v=s" => \$snmpversion,   "snmpversion=s" => \$snmpversion,
+         "d"   => \$IntDownAlert,  "down"          => \$IntDownAlert,
+         "H=s" => \$hostname,      "hostname=s"    => \$hostname,
+         "C=s" => \$community,     "community=s"   => \$community,
+         "p=s" => \$snmpport,      "port=s"        => \$snmpport,
+         "g"   => \$v2counters,    "64bits"        => \$v2counters,
+         "l=s" => \$login,         "login=s"       => \$login,
+         "x=s" => \$passwd,        "passwd=s"      => \$passwd,
+         "X=s" => \$privpass,      "privpass=s"    => \$privpass,
+         "L=s" => \$v3protocols,   "protocols=s"   => \$v3protocols);
+
+if (defined $v3protocols) {
+   if ($v3protocols =~ /,/) {
+      ($authproto, $privproto) = split(/,/, $v3protocols, 2);
+      $authproto = lc $authproto;
+      $privproto = lc $privproto;
+      if ($authproto ne 'md5' && $authproto ne 'sha') {
+         print "Unknown authentication protocol for SNMPv3: $authproto\n";
+         exit 3;
+      }
+      if ($privproto ne 'des' && $privproto ne 'aes') {
+         print "Unknown privacy protocol for SNMPv3: $privproto\n";
+         exit 3;
+      }
+   }
+   else {
+      print "SNMPv3 protocols must be provided as <authproto>,<privproto>\n";
+      exit 3;
+   }
+   if (!defined $login) {
+      print "SNMPv3 protocols option requires SNMPv3 login credentials\n";
+      exit 3;
+   }
+}
+
+if (defined $login || defined $passwd || defined $privpass) {
+   if (!defined $login || !defined $passwd) {
+      print "SNMPv3 login and password must both be specified\n";
+      exit 3;
+   }
+   $snmpversion = 3;
+}
 
 if ($help)
    {
@@ -129,10 +171,17 @@ if (!$snmpport)
    $snmpport = $snmpport_def;
    }
 
-if (!($snmpversion eq "1" || $snmpversion eq "2"))
+if (!($snmpversion eq "1" || $snmpversion eq "2" || $snmpversion eq "3"))
    {
-   print "\nError! Only SNMP V1 or 2 supported!\n";
+   print "\nError! Only SNMP v1, v2c or v3 supported!\n";
    print "Wrong version submitted.\n";
+   print_usage();
+   exit 3;
+   }
+
+if ($snmpversion eq "3" && (!defined $login || !defined $passwd))
+   {
+   print "SNMP v3 requires both login and auth password.\n";
    print_usage();
    exit 3;
    }
@@ -141,13 +190,45 @@ if (!($snmpversion eq "1" || $snmpversion eq "2"))
 
 # We initialize the snmp connection
 
-($session, $error) = Net::SNMP->session( -hostname  => $hostname,
-                                         -version   => $snmpversion,
-                                         -community => $community,
-                                         -port      => $snmpport,
-                                         -retries   => 10,
-                                         -timeout   => 10
-                                        );
+if ($snmpversion eq "3")
+   {
+   if (defined $privpass)
+      {
+      ($session, $error) = Net::SNMP->session( -hostname     => $hostname,
+                                               -version      => 3,
+                                               -username     => $login,
+                                               -authpassword => $passwd,
+                                               -authprotocol => $authproto,
+                                               -privpassword => $privpass,
+                                               -privprotocol => $privproto,
+                                               -port         => $snmpport,
+                                               -retries      => 10,
+                                               -timeout      => 10
+                                             );
+      }
+   else
+      {
+      ($session, $error) = Net::SNMP->session( -hostname     => $hostname,
+                                               -version      => 3,
+                                               -username     => $login,
+                                               -authpassword => $passwd,
+                                               -authprotocol => $authproto,
+                                               -port         => $snmpport,
+                                               -retries      => 10,
+                                               -timeout      => 10
+                                             );
+      }
+   }
+else
+   {
+   ($session, $error) = Net::SNMP->session( -hostname  => $hostname,
+                                            -version   => $snmpversion,
+                                            -community => $community,
+                                            -port      => $snmpport,
+                                            -retries   => 10,
+                                            -timeout   => 10
+                                          );
+   }
 
 
 # If there is something wrong...exit
@@ -665,7 +746,7 @@ exit 3;
 
 sub print_usage
     {
-    print "\nUsage: $ProgName -H <host> [-C community] [-d]\n\n";
+    print "\nUsage: $ProgName -H <host> [-C community] [-v 1|2|3 | -l login -x passwd [-X privpass -L <authp>,<privp>]] [-d]\n\n";
     print "or\n";
     print "\nUsage: $ProgName -h for help.\n\n";
     }
@@ -675,8 +756,12 @@ sub print_help
     print_usage();
     print "    -H, --hostname=HOST : Name or IP address of host to check\n";
     print "    -C, --community=community : SNMP community (default public)\n";
-    print "    -v, --snmpversion=snmpversion : Version of the SNMP protocol. At present version 1 or 2c\n\n";
-    print "    -p, --portsnmpversion=snmpversion : Version of the SNMP protocol. At present version 1 or 2c\n\n";
+    print "    -v, --snmpversion=snmpversion : Version of the SNMP protocol. 1, 2c or 3\n";
+    print "    -p, --port=PORT : SNMP port (default 161)\n";
+    print "    -l, --login=LOGIN : SNMPv3 login\n";
+    print "    -x, --passwd=PASSWD : SNMPv3 authentication password\n";
+    print "    -X, --privpass=PASSWD : SNMPv3 privacy password (enables AuthPriv)\n";
+    print "    -L, --protocols=<authproto>,<privproto> : SNMPv3 auth and priv protocols (md5|sha, des|aes)\n";
     print "    -g, --64bits : Use 64bits counters\n";
     print "    -d, --down : Alarm if any of the interfaces is down\n";
     print "    -h, --help : Short help message\n";
