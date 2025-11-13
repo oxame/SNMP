@@ -217,31 +217,81 @@ warningqty=0
 okqty=0
 avg=0
 
-if [[ "$snmpversion" == "3" ]]; then
-	securitylevel=noAuthNoPriv
-
-	if [[ -n "$snmpauthpassword" ]]; then
-		securitylevel=authNoPriv
-	fi
-
-	if [[ -n "$snmpprivprotocol" ]]; then
-		securitylevel=authPriv
-	fi
-
-	mysnmpcheck="snmpget -v $snmpversion -t $timeout -u $snmpuser -l $securitylevel"
-
-	if [[ -n "$snmpauthpassword" ]]; then
-		mysnmpcheck="$mysnmpcheck -a $snmpauthprotocol -A $snmpauthpassword"
-	fi
-
-	if [[ -n "$snmpprivprotocol" ]]; then
-		mysnmpcheck="$mysnmpcheck -x $snmpprivprotocol -X $snmpprivpassword"
-	fi
-
-	mysnmpcheck="$mysnmpcheck $hostaddress:$snmpport"
-else
-	mysnmpcheck="snmpget -v $snmpversion -c $community -t $timeout $hostaddress:$snmpport"
+if [[ -z "$hostaddress" ]] || [[ -z "$snmpversion" ]]; then
+        echo "Missing SNMP connection parameters"
+        exit 3
 fi
+
+if [[ "$snmpversion" == "3" ]]; then
+        if [[ -z "$snmpuser" ]]; then
+                echo "SNMPv3 user (-U) is required when using SNMP version 3"
+                exit 3
+        fi
+
+        SNMPSecurityLevel="noauthnopriv"
+
+        if [[ -n "$snmpauthpassword" ]]; then
+                SNMPSecurityLevel="authnopriv"
+        fi
+
+        if [[ -n "$snmpprivprotocol" ]] || [[ -n "$snmpprivpassword" ]]; then
+                SNMPSecurityLevel="authpriv"
+        fi
+
+        SNMPSecurityLevel=$(echo "$SNMPSecurityLevel" | tr '[:upper:]' '[:lower:]')
+        SNMPAuthProtocol=$(echo "${snmpauthprotocol:-MD5}" | tr '[:lower:]' '[:upper:]')
+        SNMPPrivProtocol=$(echo "${snmpprivprotocol:-DES}" | tr '[:lower:]' '[:upper:]')
+
+        case "$SNMPSecurityLevel" in
+                "noauthnopriv")
+                        SNMPArgs=" -OQne -v 3 -u $snmpuser -l noAuthNoPriv -t $timeout"
+                        ;;
+                "authnopriv")
+                        if [[ ${#snmpauthpassword} -lt 8 ]]; then
+                                echo "snmpget:  (The supplied password is too short.)"
+                                exit 1
+                        fi
+
+                        if [[ "$SNMPAuthProtocol" != "MD5" && "$SNMPAuthProtocol" != "SHA" ]]; then
+                                echo "Unsupported SNMP authentication protocol: $SNMPAuthProtocol"
+                                exit 1
+                        fi
+
+                        SNMPArgs=" -OQne -v 3 -u $snmpuser -l authNoPriv -a $SNMPAuthProtocol -A $snmpauthpassword -t $timeout"
+                        ;;
+                "authpriv")
+                        if [[ ${#snmpauthpassword} -lt 8 ]]; then
+                                echo "snmpget:  (The supplied password is too short.)"
+                                exit 1
+                        fi
+
+                        if [[ ${#snmpprivpassword} -lt 8 ]]; then
+                                echo "snmpget:  (The supplied privacy password is too short.)"
+                                exit 1
+                        fi
+
+                        if [[ "$SNMPAuthProtocol" != "MD5" && "$SNMPAuthProtocol" != "SHA" ]]; then
+                                echo "Unsupported SNMP authentication protocol: $SNMPAuthProtocol"
+                                exit 1
+                        fi
+
+                        if [[ "$SNMPPrivProtocol" != "DES" && "$SNMPPrivProtocol" != "AES" ]]; then
+                                echo "Unsupported SNMP privacy protocol: $SNMPPrivProtocol"
+                                exit 1
+                        fi
+
+                        SNMPArgs=" -OQne -v 3 -u $snmpuser -l authPriv -a $SNMPAuthProtocol -A $snmpauthpassword -x $SNMPPrivProtocol -X $snmpprivpassword -t $timeout"
+                        ;;
+                *)
+                        echo "Unsupported SNMP security level: $SNMPSecurityLevel"
+                        exit 1
+                        ;;
+        esac
+else
+        SNMPArgs=" -OQne -v $snmpversion -c $community -t $timeout"
+fi
+
+mysnmpcheck="snmpget$SNMPArgs $hostaddress:$snmpport"
 
 
 # DISKUSAGE
