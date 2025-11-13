@@ -28,6 +28,11 @@ usage="
 -t timeout 			default 10 secdons
 -v snmpversion		default 2c
 -p snmpport			defauilt 161
+-U snmpuser			SNMPv3 user name
+-A authpassword		SNMPv3 authentication password
+-L authprotocol		SNMPv3 authentication protocol (MD5, SHA, etc.)
+-E privprotocol		SNMPv3 privacy protocol (DES, AES, etc.)
+-X privpassword		SNMPv3 privacy password
 -a 					checks you can use
 					cpuload: check´s the system CPU load in perent
 					cputemp: check´s the sytem CPU Temperature
@@ -66,7 +71,7 @@ timeout 60 seconds
 
 "
 
-while getopts H:b:C:t:v:p:a:w:c:u:M:m:help:h option; 
+while getopts H:b:C:t:v:p:a:w:c:u:M:m:U:A:L:E:X:help:h option; 
 do
 	case $option in
 		H) hostaddress=$OPTARG;;
@@ -81,6 +86,11 @@ do
 		u) unit=$OPTARG;;
 		M) max=$OPTARG;;
 		m) min=$OPTARG;;
+		U) snmpuser=$OPTARG;;
+		A) snmpauthpassword=$OPTARG;;
+		L) snmpauthprotocol=$OPTARG;;
+		E) snmpprivprotocol=$OPTARG;;
+		X) snmpprivpassword=$OPTARG;;
 		h) help=1;;
 	esac
 done
@@ -99,6 +109,36 @@ if  [[ -z "$hostaddress" ]] || [[ -z "$check" ]] && [[ "$help" != "1" ]];then
 "
         echo "$usage"
         exit;
+fi
+
+if [[ "$snmpversion" == "3" ]]; then
+	if [[ -z "$snmpuser" ]]; then
+		echo "SNMPv3 user (-U) is required when using SNMP version 3"
+		exit 3
+	fi
+
+	if [[ -n "$snmpprivprotocol" ]] || [[ -n "$snmpprivpassword" ]]; then
+		if [[ -z "$snmpauthpassword" ]]; then
+			echo "SNMPv3 privacy requires an authentication password (-A)"
+			exit 3
+		fi
+		if [[ -z "$snmpauthprotocol" ]]; then
+			snmpauthprotocol=MD5
+		fi
+		if [[ -z "$snmpprivprotocol" ]] || [[ -z "$snmpprivpassword" ]]; then
+			echo "Both SNMPv3 privacy protocol (-E) and password (-X) must be provided"
+			exit 3
+		fi
+	fi
+
+	if [[ -n "$snmpauthprotocol" ]] && [[ -z "$snmpauthpassword" ]]; then
+		echo "SNMPv3 authentication protocol (-L) requires a password (-A)"
+		exit 3
+	fi
+
+	if [[ -n "$snmpauthpassword" ]] && [[ -z "$snmpauthprotocol" ]]; then
+		snmpauthprotocol=MD5
+	fi
 fi
 
 }
@@ -167,7 +207,31 @@ warningqty=0
 okqty=0
 avg=0
 
-mysnmpcheck="snmpget -v $snmpversion -c $community -t $timeout $hostaddress:$snmpport"
+if [[ "$snmpversion" == "3" ]]; then
+	securitylevel=noAuthNoPriv
+
+	if [[ -n "$snmpauthpassword" ]]; then
+		securitylevel=authNoPriv
+	fi
+
+	if [[ -n "$snmpprivprotocol" ]]; then
+		securitylevel=authPriv
+	fi
+
+	mysnmpcheck="snmpget -v $snmpversion -t $timeout -u $snmpuser -l $securitylevel"
+
+	if [[ -n "$snmpauthpassword" ]]; then
+		mysnmpcheck="$mysnmpcheck -a $snmpauthprotocol -A $snmpauthpassword"
+	fi
+
+	if [[ -n "$snmpprivprotocol" ]]; then
+		mysnmpcheck="$mysnmpcheck -x $snmpprivprotocol -X $snmpprivpassword"
+	fi
+
+	mysnmpcheck="$mysnmpcheck $hostaddress:$snmpport"
+else
+	mysnmpcheck="snmpget -v $snmpversion -c $community -t $timeout $hostaddress:$snmpport"
+fi
 
 
 # DISKUSAGE
