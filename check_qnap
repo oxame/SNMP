@@ -56,7 +56,7 @@ check_qanp -H 192.168.0.2 -a mem
 
 responce: OK: Memory Total=15976MB used=9177MB free:6799MB|Memory usage=43%;80;90;0;100
 
-or 
+or
 
 check_qanp -H myqnap.domain.com -C public -v 1 -p 123 -a cputemp -u F -w 40 -c 45 -t 60
 checked host myqnap.domain.com
@@ -68,6 +68,16 @@ unit fahrenheit
 warning 40 F
 critical 45 F
 timeout 60 seconds
+
+or (SNMPv3)
+
+check_qanp -H secure-qnap.local -v 3 -U snmpuser -A authpass -L SHA -E AES -X privpass -a sysinfo
+checked host secure-qnap.local
+snmpversion 3
+snmpuser snmpuser
+authprotocol SHA
+privprotocol AES
+check sysinfo
 
 "
 
