@@ -109,21 +109,19 @@ my $o_timeout=  undef; 		# Timeout (Default 5)
 my $o_perf=     undef;          # Output performance data
 my $o_version2= undef;          # use snmp v2c
 # SNMPv3 specific
-my $o_login=	undef;		# Login for snmpv3
-my $o_passwd=	undef;		# Pass for snmpv3
-my $v3protocols=undef;	# V3 protocol list.
-my $o_authproto='md5';		# Auth protocol
-my $o_privproto='des';		# Priv protocol
-my $o_authproto_opt=undef;	# Auth protocol option value
-my $o_privproto_opt=undef;	# Priv protocol option value
-my $o_privpass= undef;		# priv password
+my $o_login=	undef;		# SNMPv3 security name
+my $o_passwd=	undef;		# SNMPv3 authentication pass phrase
+my $o_seclevel= undef;		# SNMPv3 security level
+my $o_authproto=undef;		# SNMPv3 authentication protocol
+my $o_privproto=undef;		# SNMPv3 privacy protocol
+my $o_privpass= undef;		# SNMPv3 privacy pass phrase
 
 # functions
 
 sub p_version { print "check_snmp_load version : $Version\n"; }
 
 sub print_usage {
-    print "Usage: $0 [-v] -H <host> -C <snmp_community> [-2] | (-l login -x passwd [-X pass [-L <authp>,<privp>] [-A <authp>] [-Y <privp>]])  [-p <port>] -w <warn level> -c <crit level> -T=[stand|netsl|netsc|as400|cisco|cata|nsc|fg|bc|nokia|hp|lp|hpux] [-f] [-t <timeout>] [-V]\n";
+    print "Usage: $0 [-v] -H <host> -C <snmp_community> [-2] | (-u <secname> -l <level> [-A <authpass> [-a <authproto>]] [-X <privpass> [-x <privproto>]])  [-p <port>] -w <warn level> -c <crit level> -T=[stand|netsl|netsc|as400|cisco|cata|nsc|fg|bc|nokia|hp|lp|hpux] [-f] [-t <timeout>] [-V]\n";
 }
 
 sub isnnum { # Return true if arg is not a number
@@ -147,18 +145,18 @@ sub help {
    community name for the host's SNMP agent (implies v1 protocol)
 -2, --v2c
    Use snmp v2c
--l, --login=LOGIN ; -x, --passwd=PASSWD
-   Login and auth password for snmpv3 authentication 
-   If no priv password exists, implies AuthNoPriv 
--X, --privpass=PASSWD
-   Priv password for snmpv3 (AuthPriv protocol)
--L, --protocols=<authproto>,<privproto>
-   <authproto> : Authentication protocol (md5|sha : default md5)
-   <privproto> : Priv protocole (des|aes : default des) 
--A, --authproto=<authproto>
-   SNMPv3 authentication protocol (md5|sha)
--Y, --privproto=<privproto>
-   SNMPv3 privacy protocol (des|aes)
+-u, --username=USER-NAME
+   security name for snmpv3 requests
+-l, --level=LEVEL
+   security level (noAuthNoPriv|authNoPriv|authPriv)
+-A, --authpass=PASSPHRASE
+   authentication pass phrase for snmpv3 (required for authNoPriv and authPriv)
+-a, --authproto=PROTOCOL
+   authentication protocol (MD5|SHA|SHA-224|SHA-256|SHA-384|SHA-512)
+-X, --privpass=PASSPHRASE
+   privacy pass phrase for snmpv3 (required for authPriv)
+-x, --privproto=PROTOCOL
+   privacy protocol (DES|AES|AES-192|AES-256)
 -P, --port=PORT
    SNMP port (Default 161)
 -w, --warn=INTEGER | INT,INT,INT
@@ -203,13 +201,16 @@ sub check_options {
         'h'     => \$o_help,    	'help'        	=> \$o_help,
         'H:s'   => \$o_host,		'hostname:s'	=> \$o_host,
         'p:i'   => \$o_port,   		'port:i'	=> \$o_port,
-        'C:s'   => \$o_community,	'community:s'	=> \$o_community,
-	'l:s'	=> \$o_login,		'login:s'	=> \$o_login,
-	'x:s'	=> \$o_passwd,		'passwd:s'	=> \$o_passwd,
-	'X:s'	=> \$o_privpass,		'privpass:s'	=> \$o_privpass,
-	'L:s'	=> \$v3protocols,		'protocols:s'	=> \$v3protocols,   
-        'A:s'   => \$o_authproto_opt,           'authproto:s'   => \$o_authproto_opt,
-        'Y:s'   => \$o_privproto_opt,           'privproto:s'   => \$o_privproto_opt,
+        'C:s'   => \$o_community,       'community:s'   => \$o_community,
+        'u:s'   => \$o_login,           'username:s'    => \$o_login,
+        'l:s'   => \$o_seclevel,        'level:s'       => \$o_seclevel,
+        'A:s'   => \$o_passwd,          'authpass:s'    => \$o_passwd,
+        'a:s'   => \$o_authproto,       'authproto:s'   => \$o_authproto,
+        'X:s'   => \$o_privpass,        'privpass:s'    => \$o_privpass,
+        'x:s'   => \$o_privproto,       'privproto:s'   => \$o_privproto,
+        'login:s'       => \$o_login,
+        'secname:s'     => \$o_login,
+        'passwd:s'      => \$o_passwd,
         't:i'   => \$o_timeout,       	'timeout:i'     => \$o_timeout,
 	'V'	=> \$o_version,		'version'	=> \$o_version,
 	'2'     => \$o_version2,        'v2c'           => \$o_version2,
@@ -232,36 +233,69 @@ sub check_options {
     if ( ! defined($o_host) ) # check host and filter 
 	{ print_usage(); exit $ERRORS{"UNKNOWN"}}
     # check snmp information
-    if ( !defined($o_community) && (!defined($o_login) || !defined($o_passwd)) )
-	  { print "Put snmp login info!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	if ((defined($o_login) || defined($o_passwd)) && (defined($o_community) || defined($o_version2)) )
-	  { print "Can't mix snmp v1,2c,3 protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	if (defined ($v3protocols)) {
-	  if (!defined($o_login)) { print "Put snmp V3 login info with protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	  my @v3proto=split(/,/,$v3protocols);
-	  if ((defined ($v3proto[0])) && ($v3proto[0] ne "")) {$o_authproto=lc $v3proto[0];	}	# Auth protocol
-	  if (defined ($v3proto[1])) {$o_privproto=lc $v3proto[1];	}	# Priv  protocol
-	  if ((defined ($v3proto[1])) && (!defined($o_privpass))) {
-	    print "Put snmp V3 priv login info with priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	}
-	if (defined $o_authproto_opt) {
-	  $o_authproto = lc $o_authproto_opt;
-	} else {
-	  $o_authproto = lc $o_authproto;
-	}
-	if (($o_authproto ne 'md5') && ($o_authproto ne 'sha')) {
-	  print "Unknown authentication protocol for SNMPv3: $o_authproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	if (defined $o_privproto_opt) {
-	  $o_privproto = lc $o_privproto_opt;
-	} else {
-	  $o_privproto = lc $o_privproto;
-	}
-	if (($o_privproto ne 'des') && ($o_privproto ne 'aes')) {
-	  print "Unknown privacy protocol for SNMPv3: $o_privproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	if ((defined $o_authproto_opt || defined $o_privproto_opt) && !defined($o_login)) {
-	  print "Put snmp V3 login info when specifying auth/priv protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
-	if (defined $o_privproto_opt && !defined($o_privpass)) {
-	  print "Put snmp V3 priv login info when specifying priv protocol!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    my $using_v3 = 0;
+    $using_v3 = 1 if defined($o_login) || defined($o_seclevel) || defined($o_passwd) || defined($o_privpass) || defined($o_authproto) || defined($o_privproto);
+    if ($using_v3) {
+          if (defined($o_community) || defined($o_version2))
+          { print "Can't mix snmp v1,2c,3 protocols!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+          if (!defined($o_login))
+          { print "Put snmp V3 security name (-u)!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+          if (!defined($o_seclevel))
+          { print "Put snmp V3 security level (-l)!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+          my $raw_seclevel = $o_seclevel;
+          $o_seclevel = lc $o_seclevel;
+          $o_seclevel =~ s/[^a-z]//g;
+          my %valid_auth = map { $_ => 1 } qw(md5 sha sha224 sha256 sha384 sha512);
+          my %valid_priv = map { $_ => 1 } qw(des aes aes192 aes256);
+          if (defined $o_authproto) {
+            $o_authproto = lc $o_authproto;
+            $o_authproto =~ s/[^a-z0-9]//g;
+            $o_authproto = 'sha' if $o_authproto eq 'sha1';
+          }
+          if (defined $o_privproto) {
+            $o_privproto = lc $o_privproto;
+            $o_privproto =~ s/[^a-z0-9]//g;
+            $o_privproto = 'aes' if $o_privproto eq 'aes128';
+          }
+          if ($o_seclevel eq 'noauthnopriv') {
+            if (defined($o_passwd) || defined($o_authproto))
+            { print "Auth options are not allowed with noAuthNoPriv!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (defined($o_privpass) || defined($o_privproto))
+            { print "Privacy options are not allowed with noAuthNoPriv!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            $o_passwd = undef;
+            $o_authproto = undef;
+            $o_privpass = undef;
+            $o_privproto = undef;
+          } elsif ($o_seclevel eq 'authnopriv') {
+            if (!defined($o_passwd))
+            { print "Put snmp V3 authentication pass phrase (-A)!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (!defined($o_authproto) || $o_authproto eq '')
+            { $o_authproto = 'md5'; }
+            if (!$valid_auth{$o_authproto})
+            { print "Unknown authentication protocol for SNMPv3: $o_authproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (defined($o_privpass) || defined($o_privproto))
+            { print "Privacy options require authPriv security level!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            $o_privpass = undef;
+            $o_privproto = undef;
+          } elsif ($o_seclevel eq 'authpriv') {
+            if (!defined($o_passwd))
+            { print "Put snmp V3 authentication pass phrase (-A)!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (!defined($o_privpass))
+            { print "Put snmp V3 privacy pass phrase (-X)!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (!defined($o_authproto) || $o_authproto eq '')
+            { $o_authproto = 'md5'; }
+            if (!$valid_auth{$o_authproto})
+            { print "Unknown authentication protocol for SNMPv3: $o_authproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+            if (!defined($o_privproto) || $o_privproto eq '')
+            { $o_privproto = 'des'; }
+            if (!$valid_priv{$o_privproto})
+            { print "Unknown privacy protocol for SNMPv3: $o_privproto\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+        } else {
+            print "Unknown SNMPv3 security level: $raw_seclevel\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    } else {
+          if (!defined($o_community))
+          { print "Put snmp community!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
+    }
     # Check warnings and critical
     if (!defined($o_warn) || !defined($o_crit))
  	{ print "put warning and critical info!\n"; print_usage(); exit $ERRORS{"UNKNOWN"}}
@@ -312,31 +346,43 @@ $SIG{'ALRM'} = sub {
 
 # Connect to host
 my ($session,$error);
-if ( defined($o_login) && defined($o_passwd)) {
+if ( defined($o_login) ) {
   # SNMPv3 login
   verb("SNMPv3 login");
-    if (!defined ($o_privpass)) {
-  verb("SNMPv3 AuthNoPriv login : $o_login, $o_authproto");
+  if ($o_seclevel eq 'noauthnopriv') {
+    verb("SNMPv3 noAuthNoPriv login : $o_login");
     ($session, $error) = Net::SNMP->session(
-      -hostname   	=> $o_host,
-      -version		=> '3',
-      -username		=> $o_login,
-      -authpassword	=> $o_passwd,
-      -authprotocol	=> $o_authproto,
-      -timeout          => $o_timeout
-    );  
-  } else {
-    verb("SNMPv3 AuthPriv login : $o_login, $o_authproto, $o_privproto");
-    ($session, $error) = Net::SNMP->session(
-      -hostname   	=> $o_host,
-      -version		=> '3',
-      -username		=> $o_login,
-      -authpassword	=> $o_passwd,
-      -authprotocol	=> $o_authproto,
-      -privpassword	=> $o_privpass,
-	  -privprotocol => $o_privproto,
+      -hostname         => $o_host,
+      -port             => $o_port,
+      -version          => '3',
+      -username         => $o_login,
       -timeout          => $o_timeout
     );
+  } elsif ($o_seclevel eq 'authnopriv') {
+    verb("SNMPv3 AuthNoPriv login : $o_login, $o_authproto");
+    ($session, $error) = Net::SNMP->session(
+      -hostname         => $o_host,
+      -port             => $o_port,
+      -version          => '3',
+      -username         => $o_login,
+      -authpassword     => $o_passwd,
+      -authprotocol     => $o_authproto,
+      -timeout          => $o_timeout
+    );
+    } else {
+      verb("SNMPv3 AuthPriv login : $o_login, $o_authproto, $o_privproto");
+      ($session, $error) = Net::SNMP->session(
+        -hostname         => $o_host,
+        -port             => $o_port,
+        -version          => '3',
+        -username         => $o_login,
+        -authpassword     => $o_passwd,
+        -authprotocol     => $o_authproto,
+        -privpassword     => $o_privpass,
+        -privprotocol     => $o_privproto,
+        -timeout          => $o_timeout
+      );
+    }
   }
 } else {
 	if (defined ($o_version2)) {
