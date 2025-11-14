@@ -68,6 +68,8 @@ my $authproto = 'md5';                        # SNMPv3 auth protocol
 my $privproto = 'des';                        # SNMPv3 priv protocol
 my $authproto_opt;                            # SNMPv3 auth protocol option value
 my $privproto_opt;                            # SNMPv3 priv protocol option value
+my $seclevel_opt;                             # SNMPv3 security level option value
+my $seclevel;                                 # SNMPv3 security level
 my $community;                                # community 
 my $oid2get;                                  # To store the OIDs
 my $IntDownAlert;                             # Alarm if interface is down. Default is no alarm
@@ -89,26 +91,37 @@ GetOptions
          "C=s" => \$community,     "community=s"   => \$community,
          "p=s" => \$snmpport,      "port=s"        => \$snmpport,
          "g"   => \$v2counters,    "64bits"        => \$v2counters,
-         "l=s" => \$login,         "login=s"       => \$login,
-         "x=s" => \$passwd,        "passwd=s"      => \$passwd,
+         "u=s" => \$login,         "user=s"        => \$login,
+                                "username=s"   => \$login,
+                                "login=s"      => \$login,
+         "A=s" => \$passwd,        "authpass=s"    => \$passwd,
+                                "authpassword=s" => \$passwd,
+                                "passwd=s"     => \$passwd,
          "X=s" => \$privpass,      "privpass=s"    => \$privpass,
+                                "privpassword=s" => \$privpass,
          "L=s" => \$v3protocols,   "protocols=s"   => \$v3protocols,
-         "A=s" => \$authproto_opt, "authproto=s"   => \$authproto_opt,
-         "Y=s" => \$privproto_opt, "privproto=s"   => \$privproto_opt);
+         "a=s" => \$authproto_opt, "authproto=s"   => \$authproto_opt,
+                                "authprotocol=s" => \$authproto_opt,
+         "x=s" => \$privproto_opt, "privproto=s"   => \$privproto_opt,
+                                "privprotocol=s" => \$privproto_opt,
+         "l=s" => \$seclevel_opt,  "seclevel=s"    => \$seclevel_opt,
+                                "securitylevel=s" => \$seclevel_opt);
 
 if (defined $v3protocols) {
    if ($v3protocols =~ /,/) {
       ($authproto, $privproto) = split(/,/, $v3protocols, 2);
-      $authproto = lc $authproto;
-      $privproto = lc $privproto;
-      if ($authproto ne 'md5' && $authproto ne 'sha') {
+      my $auth_from_list = canonicalize_auth_protocol($authproto);
+      if (!defined $auth_from_list) {
          print "Unknown authentication protocol for SNMPv3: $authproto\n";
          exit 3;
       }
-      if ($privproto ne 'des' && $privproto ne 'aes') {
+      my $priv_from_list = canonicalize_priv_protocol($privproto);
+      if (!defined $priv_from_list) {
          print "Unknown privacy protocol for SNMPv3: $privproto\n";
          exit 3;
       }
+      $authproto = $auth_from_list;
+      $privproto = $priv_from_list;
    }
    else {
       print "SNMPv3 protocols must be provided as <authproto>,<privproto>\n";
@@ -121,44 +134,129 @@ if (defined $v3protocols) {
 }
 
 if (defined $authproto_opt) {
-   $authproto = lc $authproto_opt;
+   my $normalized_authproto = canonicalize_auth_protocol($authproto_opt);
+   if (!defined $normalized_authproto) {
+      print "Unknown authentication protocol for SNMPv3: $authproto_opt\n";
+      exit 3;
+   }
+   $authproto = $normalized_authproto;
 }
 else {
-   $authproto = lc $authproto;
-}
-if ($authproto ne 'md5' && $authproto ne 'sha') {
-   print "Unknown authentication protocol for SNMPv3: $authproto\n";
-   exit 3;
+   my $normalized_authproto = canonicalize_auth_protocol($authproto);
+   if (!defined $normalized_authproto) {
+      print "Unknown authentication protocol for SNMPv3: $authproto\n";
+      exit 3;
+   }
+   $authproto = $normalized_authproto;
 }
 
 if (defined $privproto_opt) {
-   $privproto = lc $privproto_opt;
+   my $normalized_privproto = canonicalize_priv_protocol($privproto_opt);
+   if (!defined $normalized_privproto) {
+      print "Unknown privacy protocol for SNMPv3: $privproto_opt\n";
+      exit 3;
+   }
+   $privproto = $normalized_privproto;
 }
 else {
-   $privproto = lc $privproto;
-}
-if ($privproto ne 'des' && $privproto ne 'aes') {
-   print "Unknown privacy protocol for SNMPv3: $privproto\n";
-   exit 3;
+   my $normalized_privproto = canonicalize_priv_protocol($privproto);
+   if (!defined $normalized_privproto) {
+      print "Unknown privacy protocol for SNMPv3: $privproto\n";
+      exit 3;
+   }
+   $privproto = $normalized_privproto;
 }
 
-if ((defined $authproto_opt || defined $privproto_opt) && !defined $login) {
-   print "SNMPv3 protocol options require SNMPv3 login credentials\n";
+if ((defined $authproto_opt || defined $privproto_opt || defined $seclevel_opt ||
+     defined $privpass || defined $passwd || defined $v3protocols) && !defined $login) {
+   print "SNMPv3 options require an SNMPv3 security name (-u)\n";
    exit 3;
 }
 
 if (defined $privproto_opt && !defined $privpass) {
-   print "SNMPv3 privacy protocol option requires a privacy password\n";
+   print "SNMPv3 privacy protocol option requires a privacy password (-X)\n";
    exit 3;
 }
 
 if (defined $login || defined $passwd || defined $privpass ||
-    defined $authproto_opt || defined $privproto_opt) {
+    defined $authproto_opt || defined $privproto_opt || defined $v3protocols ||
+    defined $seclevel_opt) {
    if (!defined $login || !defined $passwd) {
-      print "SNMPv3 login and password must both be specified\n";
-      exit 3;
+      if (!defined $login) {
+         print "SNMPv3 security name (-u) must be specified\n";
+         exit 3;
+      }
    }
    $snmpversion = 3;
+}
+
+if (defined $seclevel_opt) {
+   $seclevel = canonicalize_security_level($seclevel_opt);
+   if (!defined $seclevel) {
+      print "Unknown SNMPv3 security level: $seclevel_opt\n";
+      exit 3;
+   }
+}
+
+my $snmpv3_requested = (defined $login || defined $passwd || defined $privpass ||
+                        defined $authproto_opt || defined $privproto_opt ||
+                        defined $v3protocols || defined $seclevel_opt ||
+                        (defined $snmpversion && $snmpversion eq '3'));
+
+if ($snmpv3_requested) {
+   if (!defined $seclevel) {
+      if (defined $privpass || defined $privproto_opt ||
+          (defined $v3protocols && defined $privproto && $privproto ne 'des')) {
+         $seclevel = 'authPriv';
+      }
+      elsif (defined $passwd || defined $authproto_opt || defined $v3protocols) {
+         $seclevel = 'authNoPriv';
+      }
+      else {
+         $seclevel = 'noAuthNoPriv';
+      }
+   }
+
+   if (defined $seclevel_opt) {
+      if ($seclevel eq 'noAuthNoPriv' && (defined $passwd || defined $privpass)) {
+         print "SNMPv3 security level noAuthNoPriv cannot be used with authentication or privacy passwords\n";
+         exit 3;
+      }
+      if ($seclevel eq 'authNoPriv' && defined $privpass) {
+         print "SNMPv3 security level authNoPriv cannot be used with a privacy password (-X)\n";
+         exit 3;
+      }
+   }
+
+   if (!defined $login) {
+      print "SNMPv3 security name (-u) must be specified\n";
+      exit 3;
+   }
+
+   if ($seclevel eq 'authNoPriv' && !defined $passwd) {
+      print "SNMPv3 authNoPriv security level requires an authentication password (-A)\n";
+      exit 3;
+   }
+
+   if ($seclevel eq 'authPriv') {
+      if (!defined $passwd) {
+         print "SNMPv3 authPriv security level requires an authentication password (-A)\n";
+         exit 3;
+      }
+      if (!defined $privpass) {
+         print "SNMPv3 authPriv security level requires a privacy password (-X)\n";
+         exit 3;
+      }
+   }
+
+   if (defined $privpass && $seclevel ne 'authPriv') {
+      print "SNMPv3 privacy password provided but security level is not authPriv\n";
+      exit 3;
+   }
+   if (defined $privproto_opt && $seclevel ne 'authPriv') {
+      print "SNMPv3 privacy protocol option requires the authPriv security level\n";
+      exit 3;
+   }
 }
 
 if ($help)
@@ -216,45 +314,66 @@ if (!($snmpversion eq "1" || $snmpversion eq "2" || $snmpversion eq "3"))
    exit 3;
    }
 
-if ($snmpversion eq "3" && (!defined $login || !defined $passwd))
-   {
-   print "SNMP v3 requires both login and auth password.\n";
-   print_usage();
-   exit 3;
-   }
-
-# --------------- Begin main subroutine ----------------------------------------
-
-# We initialize the snmp connection
-
 if ($snmpversion eq "3")
    {
-   if (defined $privpass)
+   if (!defined $seclevel)
       {
-      ($session, $error) = Net::SNMP->session( -hostname     => $hostname,
-                                               -version      => 3,
-                                               -username     => $login,
-                                               -authpassword => $passwd,
-                                               -authprotocol => $authproto,
-                                               -privpassword => $privpass,
-                                               -privprotocol => $privproto,
-                                               -port         => $snmpport,
-                                               -retries      => 10,
-                                               -timeout      => 10
-                                             );
+      $seclevel = 'authNoPriv';
       }
-   else
+
+   if (!defined $login)
       {
-      ($session, $error) = Net::SNMP->session( -hostname     => $hostname,
-                                               -version      => 3,
-                                               -username     => $login,
-                                               -authpassword => $passwd,
-                                               -authprotocol => $authproto,
-                                               -port         => $snmpport,
-                                               -retries      => 10,
-                                               -timeout      => 10
-                                             );
+      print "SNMP v3 requires a security name (-u).\n";
+      print_usage();
+      exit 3;
       }
+
+   if ($seclevel eq 'authNoPriv' && !defined $passwd)
+      {
+      print "SNMP v3 authNoPriv security level requires an authentication password (-A).\n";
+      print_usage();
+      exit 3;
+      }
+
+   if ($seclevel eq 'authPriv')
+      {
+      if (!defined $passwd)
+         {
+         print "SNMP v3 authPriv security level requires an authentication password (-A).\n";
+         print_usage();
+         exit 3;
+         }
+      if (!defined $privpass)
+         {
+         print "SNMP v3 authPriv security level requires a privacy password (-X).\n";
+         print_usage();
+         exit 3;
+         }
+      }
+
+   my %session_args = (
+                       -hostname      => $hostname,
+                       -version       => 3,
+                       -username      => $login,
+                       -port          => $snmpport,
+                       -retries       => 10,
+                       -timeout       => 10,
+                       -securitylevel => $seclevel
+                      );
+
+   if ($seclevel eq 'authNoPriv' || $seclevel eq 'authPriv')
+      {
+      $session_args{'-authpassword'} = $passwd;
+      $session_args{'-authprotocol'} = $authproto;
+      }
+
+   if ($seclevel eq 'authPriv')
+      {
+      $session_args{'-privpassword'} = $privpass;
+      $session_args{'-privprotocol'} = $privproto;
+      }
+
+   ($session, $error) = Net::SNMP->session(%session_args);
    }
 else
    {
@@ -781,9 +900,58 @@ exit 3;
 
 # --------------- Begin subroutines ----------------------------------------
 
+sub canonicalize_auth_protocol
+    {
+    my ($proto) = @_;
+
+    return if !defined $proto;
+
+    $proto = lc $proto;
+    $proto =~ s/[^a-z0-9]//g;
+    $proto = 'sha' if $proto eq 'sha1';
+
+    my %valid = map { $_ => 1 } qw(md5 sha sha224 sha256 sha384 sha512);
+
+    return $valid{$proto} ? $proto : undef;
+    }
+
+sub canonicalize_priv_protocol
+    {
+    my ($proto) = @_;
+
+    return if !defined $proto;
+
+    $proto = lc $proto;
+    $proto =~ s/[^a-z0-9]//g;
+
+    $proto = 'aes' if $proto eq 'aes128';
+
+    my %valid = map { $_ => 1 } qw(des aes aes192 aes256 3des);
+
+    return $valid{$proto} ? $proto : undef;
+    }
+
+sub canonicalize_security_level
+    {
+    my ($level) = @_;
+
+    return if !defined $level;
+
+    $level = lc $level;
+    $level =~ s/[^a-z]//g;
+
+    my %valid = (
+                  'noauthnopriv' => 'noAuthNoPriv',
+                  'authnopriv'   => 'authNoPriv',
+                  'authpriv'     => 'authPriv'
+                );
+
+    return exists $valid{$level} ? $valid{$level} : undef;
+    }
+
 sub print_usage
     {
-    print "\nUsage: $ProgName -H <host> [-C community] [-v 1|2|3 | -l login -x passwd [-X privpass [-L <authp>,<privp>] [-A <authp>] [-Y <privp>]]] [-d]\n\n"; 
+    print "\nUsage: $ProgName -H <host> [-C community] [-v 1|2|3 | -u user [-A authpass [-a authproto]] [-X privpass [-x privproto]] [-l level] [-L <authp>,<privp>]] [-d]\n\n";
     print "or\n";
     print "\nUsage: $ProgName -h for help.\n\n";
     }
@@ -795,12 +963,13 @@ sub print_help
     print "    -C, --community=community : SNMP community (default public)\n";
     print "    -v, --snmpversion=snmpversion : Version of the SNMP protocol. 1, 2c or 3\n";
     print "    -p, --port=PORT : SNMP port (default 161)\n";
-    print "    -l, --login=LOGIN : SNMPv3 login\n";
-    print "    -x, --passwd=PASSWD : SNMPv3 authentication password\n";
-    print "    -X, --privpass=PASSWD : SNMPv3 privacy password (enables AuthPriv)\n";
-    print "    -L, --protocols=<authproto>,<privproto> : SNMPv3 auth and priv protocols (md5|sha, des|aes)\n";
-    print "    -A, --authproto=<authproto> : SNMPv3 authentication protocol (md5|sha)\n";
-    print "    -Y, --privproto=<privproto> : SNMPv3 privacy protocol (des|aes)\n";
+    print "    -u, --user=USER : SNMPv3 security name\n";
+    print "    -A, --authpass=PASSPHRASE : SNMPv3 authentication pass phrase\n";
+    print "    -a, --authproto=PROTOCOL : SNMPv3 authentication protocol (MD5|SHA|SHA-224|SHA-256|SHA-384|SHA-512)\n";
+    print "    -X, --privpass=PASSPHRASE : SNMPv3 privacy pass phrase\n";
+    print "    -x, --privproto=PROTOCOL : SNMPv3 privacy protocol (DES|AES|AES-192|AES-256|3DES)\n";
+    print "    -l, --seclevel=LEVEL : SNMPv3 security level (noAuthNoPriv|authNoPriv|authPriv)\n";
+    print "    -L, --protocols=<authproto>,<privproto> : SNMPv3 auth and priv protocols\n";
     print "    -g, --64bits : Use 64bits counters\n";
     print "    -d, --down : Alarm if any of the interfaces is down\n";
     print "    -h, --help : Short help message\n";
