@@ -326,10 +326,28 @@ sub uniq(@) {
 }
 
 sub _create_session(@) {
-        my ($server, $comm, $version, $timeout) = @_;
-        my ($sess, $err) = Net::SNMP->session( -hostname => $server, -version => $version, -community => $comm, -timeout => $timeout);
+        my ($opt_ref) = @_;
+        my %session_args = (
+                -hostname => $opt_ref->{'filer'},
+                -version  => $opt_ref->{'version'},
+                -timeout  => $opt_ref->{'timeout'},
+        );
+
+        if ($opt_ref->{'version'} eq '3') {
+                $session_args{'-username'}      = $opt_ref->{'secname'} if defined $opt_ref->{'secname'};
+                $session_args{'-securitylevel'} = $opt_ref->{'seclevel'} if defined $opt_ref->{'seclevel'};
+                $session_args{'-authprotocol'}  = lc $opt_ref->{'authproto'} if defined $opt_ref->{'authproto'};
+                $session_args{'-authpassword'}  = $opt_ref->{'authpassword'} if defined $opt_ref->{'authpassword'};
+                $session_args{'-privprotocol'}  = lc $opt_ref->{'privproto'} if defined $opt_ref->{'privproto'};
+                $session_args{'-privpassword'}  = $opt_ref->{'privpassword'} if defined $opt_ref->{'privpassword'};
+                $session_args{'-contextname'}   = $opt_ref->{'contextname'} if defined $opt_ref->{'contextname'};
+        } else {
+                $session_args{'-community'} = $opt_ref->{'community'};
+        }
+
+        my ($sess, $err) = Net::SNMP->session(%session_args);
         if (!defined($sess)) {
-                print "Can't create SNMP session to $server\n";
+                print "Can't create SNMP session to $opt_ref->{'filer'}: $err\n";
                 exit(1);
         }
         return $sess;
@@ -344,8 +362,18 @@ This is $script_name in version $script_version.
 
   Syntax:
     -H <IP_or_Hostname>     Ip/Dns Name of the Filer
-    -C <community_name>     SNMP Community Name for read
-    -V <1|2c>               SNMP version (default 1), some checks run only 2c
+    -C <community_name>     SNMP Community Name for read (SNMP v1/v2c)
+    -V <1|2c|3>             SNMP version (default 1), some checks run only 2c
+    -u <username>           SNMPv3 security name (username)
+    -l <noAuthNoPriv|authNoPriv|authPriv>
+                            SNMPv3 security level (default noAuthNoPriv)
+    -a <MD5|SHA|SHA224|SHA256|SHA384|SHA512>
+                            SNMPv3 authentication protocol
+    -A <password>           SNMPv3 authentication password
+    -x <DES|AES|AES128|AES192|AES256>
+                            SNMPv3 privacy protocol
+    -X <password>           SNMPv3 privacy password
+    -n <contextname>        SNMPv3 context name
     -T <check_type>         Type of check, see bellow
     -t <seconds>            Timeout to SNMP session in seconds (default 5)
     -w <number>             Warning Value (default 500)
@@ -504,12 +532,51 @@ my $result = GetOptions(\%opt,
                                                 'exclude|e=s',
                                                 'inform|I',
                                                 'timeout|t=i',
+                                                'secname|u=s',
+                                                'seclevel|l=s',
+                                                'authproto|a=s',
+                                                'authpassword|A=s',
+                                                'privproto|x=s',
+                                                'privpassword|X=s',
+                                                'contextname|n=s',
                                                 "help|h",
                                                 );
 
 FSyntaxError("") if defined $opt{'help'};
 FSyntaxError("Missing -H")  unless defined $opt{'filer'};
-FSyntaxError("Missing -C")  unless defined $opt{'community'};
+if (defined $opt{'version'} and $opt{'version'} eq '3') {
+        my %level_map = (
+                'noauthnopriv' => 'noAuthNoPriv',
+                'authnopriv'   => 'authNoPriv',
+                'authpriv'     => 'authPriv',
+        );
+        if (defined $opt{'seclevel'}) {
+                my $level_key = lc $opt{'seclevel'};
+                $opt{'seclevel'} = $level_map{$level_key} if exists $level_map{$level_key};
+        }
+        $opt{'seclevel'} = 'noAuthNoPriv' unless defined $opt{'seclevel'};
+        FSyntaxError("Missing -u for SNMPv3") unless defined $opt{'secname'};
+        my %valid_levels = map { $_ => 1 } values %level_map;
+        FSyntaxError("Invalid -l value for SNMPv3: $opt{'seclevel'}") unless $valid_levels{$opt{'seclevel'}};
+        if ($opt{'seclevel'} ne 'noAuthNoPriv') {
+                FSyntaxError("Missing -a for SNMPv3") unless defined $opt{'authproto'};
+                FSyntaxError("Missing -A for SNMPv3") unless defined $opt{'authpassword'};
+                my %valid_auth = map { $_ => 1 } qw(md5 sha sha224 sha256 sha384 sha512);
+                my $auth_key = lc $opt{'authproto'};
+                FSyntaxError("Invalid -a value for SNMPv3: $opt{'authproto'}") unless $valid_auth{$auth_key};
+                $opt{'authproto'} = $auth_key;
+        }
+        if ($opt{'seclevel'} eq 'authPriv') {
+                FSyntaxError("Missing -x for SNMPv3") unless defined $opt{'privproto'};
+                FSyntaxError("Missing -X for SNMPv3") unless defined $opt{'privpassword'};
+                my %valid_priv = map { $_ => 1 } qw(des aes aes128 aes192 aes256);
+                my $priv_key = lc $opt{'privproto'};
+                FSyntaxError("Invalid -x value for SNMPv3: $opt{'privproto'}") unless $valid_priv{$priv_key};
+                $opt{'privproto'} = $priv_key;
+        }
+} else {
+        FSyntaxError("Missing -C")  unless defined $opt{'community'};
+}
 FSyntaxError("Missing -T")  unless defined $opt{'check_type'};
 if($opt{'vol'}) {
         if ( !( ($opt{'vol'} =~ m#^/vol/.*$#) or ($opt{'vol'} =~ m#^[^/]*$#) ) )  {
@@ -541,7 +608,7 @@ if (!defined($counterFilePath)) {
 alarm($TIMEOUT);
 
 # Establish SNMP Session
-our $snmp_session = _create_session($opt{'filer'},$opt{'community'},$opt{'version'},$opt{'timeout'});
+our $snmp_session = _create_session(\%opt);
 
 # setup counterFile now that we have host IP and check type
 $counterFile = $counterFilePath."/".$opt{'filer'}.".check-netapp-ng.$opt{'check_type'}.nagioscache";
