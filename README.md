@@ -37,6 +37,19 @@
   -L sha,aes \
   -i 2 \
   -b 100000000
+
+# Variante SNMPv3 avec authentification SHA, chiffrement AES et seuils personnalisés
+./check_int_traffic.pl \
+  -H 198.51.100.5 \
+  -l trafic-snmpv3 \
+  -x "shaAuthPass@2024" \
+  -X "aesPrivPass@2024" \
+  -A sha \
+  -Y aes \
+  -i 3 \
+  -b 1000000000 \
+  -w 70,80 \
+  -c 85,90
 ```
 
 ## Exemples de configuration de services Nagios
